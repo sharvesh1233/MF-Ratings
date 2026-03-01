@@ -310,8 +310,8 @@ with st.sidebar:
     st.divider()
 
      if df_raw is not None:
-    st.write(df_raw.columns.tolist())
-    if df_raw is not None:
+        st.write(df_raw.columns.tolist())
+     if df_raw is not None:
         st.markdown("## 🔍 Filters")
         asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
         sel_asset = st.selectbox("Asset Class", asset_classes)
