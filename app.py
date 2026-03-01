@@ -313,17 +313,22 @@ with st.sidebar:
         st.write(df_raw.columns.tolist())
     if df_raw is not None:
         st.markdown("## 🔍 Filters")
-        asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
-        sel_asset = st.selectbox("Asset Class", asset_classes)
+if df_raw is not None:
+    asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
+    sel_asset = st.selectbox("Asset Class", asset_classes)
 
-        categories = ['All']
-        if sel_asset != 'All':
-            categories += sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
-        else:
-            categories += sorted(df_raw['Category'].dropna().unique().tolist())
-        sel_category = st.selectbox("Category", categories)
+    categories = ['All']
+    if sel_asset != 'All':
+        categories += sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
+    else:
+        categories += sorted(df_raw['Category'].dropna().unique().tolist())
+    sel_category = st.selectbox("Category", categories)
 
-        star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
+    star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
+else:
+    sel_asset = 'All'
+    sel_category = 'All'
+    star_filter = [5, 4, 3, 2]
 
     st.divider()
     st.markdown("### 📌 About")
