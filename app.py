@@ -309,7 +309,7 @@ with st.sidebar:
 
     st.divider()
 
-     if df_raw is not None:
+    if df_raw is not None:
         st.write(df_raw.columns.tolist())
      if df_raw is not None:
         st.markdown("## 🔍 Filters")
