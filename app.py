@@ -299,8 +299,6 @@ with st.sidebar:
         if gdrive_url:
             with st.spinner("Fetching data..."):
                 df_raw = load_data("Drive", gdrive_url)
-           if df_raw is not None:
-    st.write(df_raw.columns.tolist())
     if df_raw is not None:
                 st.success(f"✅ Loaded {len(df_raw)} funds")
     else:
@@ -311,6 +309,8 @@ with st.sidebar:
 
     st.divider()
 
+     if df_raw is not None:
+    st.write(df_raw.columns.tolist())
     if df_raw is not None:
         st.markdown("## 🔍 Filters")
         asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
