@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-import re
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -31,28 +30,39 @@ hr { border-color: #30363d; }
 
 
 # ─────────────────────────────────────────────
-# CLEAN COLUMN NAMES
+# EXACT COLUMN NAMES — we know the order
 # ─────────────────────────────────────────────
-def clean_columns(df):
-    """
-    Aggressively clean column names:
-    - Strip leading/trailing whitespace of all kinds
-    - Replace any internal sequence of whitespace (tabs, newlines, etc.) with a single space
-    """
-    df.columns = [re.sub(r'\s+', ' ', str(c)).strip() for c in df.columns]
+COLUMNS = [
+    'Scheme Code', 'Scheme Name', 'Asset Class', 'Category', 'Scheme AUM',
+    'Total Equity Stocks Count', 'Top 5 Stocks (%)', 'Total Sector Count',
+    'Turnover Ratio (%)', 'Std. Deviation', 'Beta', 'Sharpe Ratio',
+    'Jensen Alpha', 'Sortino', 'Up/Down Capture Ratio',
+    '3YR_1D', '3YR_1M', '3YR_1Y',
+    '5Y_1D', '5Y_1M', '5Y_1Y',
+    '10Y_1D', '10Y_1M', '10Y_1Y',
+    'Information Ratio', 'Age (From Incept Date)', 'Exit Load',
+    '1YEAR_CAGR', '3YEAR_CAGR', '5YEAR_CAGR', '10YEAR_CAGR'
+]
+
+
+def load_and_fix(df):
+    """Force assign our known column names by position, ignoring whatever Excel says."""
+    # Use only as many columns as we have defined (in case there are extra blank cols)
+    df = df.iloc[:, :len(COLUMNS)].copy()
+    df.columns = COLUMNS
     return df
 
 
 # ─────────────────────────────────────────────
-# LOAD DATA FROM GOOGLE DRIVE
+# LOAD DATA
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def load_from_drive(gdrive_url):
     try:
         file_id = gdrive_url.split("/d/")[1].split("/")[0]
         direct = f"https://drive.google.com/uc?export=download&id={file_id}"
-        df = pd.read_excel(direct, engine="openpyxl")
-        df = clean_columns(df)
+        df = pd.read_excel(direct, engine="openpyxl", header=0)
+        df = load_and_fix(df)
         return df
     except Exception as e:
         st.error(f"Could not load from Google Drive: {e}")
@@ -81,14 +91,19 @@ def percentile_score(series, weights):
 
 def compute_ratings(df_raw):
     df = df_raw.copy()
-    df = clean_columns(df)
 
     # Exclude funds younger than 5 years
     df = df[pd.to_numeric(df['Age (From Incept Date)'], errors='coerce') >= 5].copy()
 
     if df.empty:
-        st.error("No funds with Age >= 5 years found. Check your 'Age (From Incept Date)' column.")
+        st.error("No funds with Age >= 5 years found.")
         st.stop()
+
+    # Convert numeric columns
+    num_cols = COLUMNS[4:]  # everything after Scheme Code, Scheme Name, Asset Class, Category
+    for col in num_cols:
+        if col not in ['Exit Load']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
 
     # Category averages
     cat_avg_cols = [
@@ -99,14 +114,12 @@ def compute_ratings(df_raw):
         '1YEAR_CAGR', '3YEAR_CAGR', '5YEAR_CAGR', '10YEAR_CAGR',
         'Scheme AUM', 'Total Equity Stocks Count', 'Total Sector Count', 'Turnover Ratio (%)'
     ]
-    existing = [c for c in cat_avg_cols if c in df.columns]
-    cat_avgs = df.groupby('Category')[existing].transform('mean')
+    cat_avgs = df.groupby('Category')[cat_avg_cols].transform('mean')
 
-    # Std Deviation & Beta: lower = better
+    # ── QUANTITATIVE ──────────────────────────────────────────────
     df['s_StdDev'] = np.where(df['Std. Deviation'] < cat_avgs['Std. Deviation'], 0.025, 0.005)
     df['s_Beta']   = np.where(df['Beta'] < cat_avgs['Beta'], 0.025, 0.005)
 
-    # Percentile-based metrics
     for col, sname, w in [
         ('Jensen Alpha',          's_JAlpha',  [10, 7, 4, 2]),
         ('Sharpe Ratio',          's_Sharpe',  [10, 7, 4, 2]),
@@ -114,25 +127,18 @@ def compute_ratings(df_raw):
         ('Up/Down Capture Ratio', 's_UpDown',  [10, 7, 4, 2]),
     ]:
         diff = df[col] - cat_avgs[col]
-        df[sname] = diff.groupby(df['Category']).transform(
-            lambda x: percentile_score(x, w)
-        )
+        df[sname] = diff.groupby(df['Category']).transform(lambda x: percentile_score(x, w))
 
-    # Information Ratio
     df['s_IR'] = np.where(
         df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.70, 0.02,
         np.where(
             df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.50, 0.01,
-            np.where(
-                df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.30, 0.005, 0
-            )
+            np.where(df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.30, 0.005, 0)
         )
     )
 
-    # Top 5 Stocks concentration
     df['s_Top5'] = np.where(df['Top 5 Stocks (%)'] < 35, 0.02, -0.02)
 
-    # Rolling return scores
     def rolling_score(col, w):
         diff = df[col] - cat_avgs[col]
         return diff.groupby(df['Category']).transform(lambda x: percentile_score(x, w))
@@ -147,7 +153,6 @@ def compute_ratings(df_raw):
     df['s_10Y_1M'] = rolling_score('10Y_1M', [4, 2, 1, 0])
     df['s_10Y_1Y'] = rolling_score('10Y_1Y', [4, 2, 1, 0])
 
-    # CAGR
     df['s_1YCAGR']  = np.where(df['1YEAR_CAGR']  > cat_avgs['1YEAR_CAGR'],  0.02, 0)
     df['s_3YCAGR']  = np.where(df['3YEAR_CAGR']  > cat_avgs['3YEAR_CAGR'],  0.02, 0)
     df['s_5YCAGR']  = np.where(df['5YEAR_CAGR']  > cat_avgs['5YEAR_CAGR'],  0.03, 0)
@@ -163,7 +168,7 @@ def compute_ratings(df_raw):
     ]
     df['QUANT'] = df[quant_cols].sum(axis=1) / 2
 
-    # Qualitative scores
+    # ── QUALITATIVE ───────────────────────────────────────────────
     df['s_AUM']       = np.where(df['Scheme AUM'] > cat_avgs['Scheme AUM'], 0.10, 0.05)
     df['s_ExitLoad']  = np.where(
         df['Exit Load'].astype(str).str.strip().str.lower().isin(['yes', '1', 'y']), -0.10, 0.05
@@ -174,7 +179,7 @@ def compute_ratings(df_raw):
 
     df['QUAL'] = df[['s_AUM', 's_ExitLoad', 's_StockCnt', 's_SectorCnt', 's_Turnover']].sum(axis=1)
 
-    # Total score, rank, stars
+    # ── TOTAL, RANK, STARS ────────────────────────────────────────
     df['TOTAL_SCORE'] = df['QUANT'] + df['QUAL']
     df['Rank'] = df.groupby('Category')['TOTAL_SCORE'].rank(ascending=False, method='min').astype(int)
 
@@ -194,7 +199,6 @@ def compute_ratings(df_raw):
         return stars
 
     df['Stars'] = df.groupby('Category', group_keys=False).apply(assign_stars)
-
     return df
 
 
@@ -221,35 +225,25 @@ with st.sidebar:
     if data_source == "Upload Excel":
         uploaded = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
         if uploaded:
-            df_raw = pd.read_excel(uploaded, engine="openpyxl")
-            df_raw = clean_columns(df_raw)
+            df_raw = pd.read_excel(uploaded, engine="openpyxl", header=0)
+            df_raw = load_and_fix(df_raw)
             st.success(f"✅ Loaded {len(df_raw)} funds")
 
     st.divider()
 
     if df_raw is not None:
-        # Show cleaned column names for verification
-        with st.expander("🔍 Debug: Column Names"):
-            st.write(df_raw.columns.tolist())
-
         st.markdown("## 🔍 Filters")
 
-        if 'Asset Class' not in df_raw.columns:
-            st.error(f"'Asset Class' column not found. Columns found: {df_raw.columns.tolist()}")
-            sel_asset    = 'All'
-            sel_category = 'All'
-            star_filter  = [5, 4, 3, 2]
+        asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
+        sel_asset = st.selectbox("Asset Class", asset_classes)
+
+        if sel_asset != 'All':
+            cats = sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
         else:
-            asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
-            sel_asset = st.selectbox("Asset Class", asset_classes)
+            cats = sorted(df_raw['Category'].dropna().unique().tolist())
 
-            if sel_asset != 'All':
-                cats = sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
-            else:
-                cats = sorted(df_raw['Category'].dropna().unique().tolist())
-
-            sel_category = st.selectbox("Category", ['All'] + cats)
-            star_filter  = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
+        sel_category = st.selectbox("Category", ['All'] + cats)
+        star_filter  = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
 
     else:
         sel_asset    = 'All'
@@ -281,10 +275,6 @@ if df_raw is None:
     2. Click **Share** → **Anyone with the link can view**
     3. Copy the link and paste it in the sidebar
     """)
-    st.stop()
-
-if 'Asset Class' not in df_raw.columns:
-    st.warning("Waiting for valid data with 'Asset Class' column.")
     st.stop()
 
 # Compute ratings
@@ -351,10 +341,8 @@ with tab2:
             color=star_counts.values,
             color_continuous_scale='Oranges'
         )
-        fig.update_layout(
-            paper_bgcolor='#161b22', plot_bgcolor='#161b22',
-            font_color='#e6edf3', showlegend=False, coloraxis_showscale=False
-        )
+        fig.update_layout(paper_bgcolor='#161b22', plot_bgcolor='#161b22',
+                          font_color='#e6edf3', showlegend=False, coloraxis_showscale=False)
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
@@ -366,10 +354,8 @@ with tab2:
             color=cat_counts.values,
             color_continuous_scale='Blues'
         )
-        fig2.update_layout(
-            paper_bgcolor='#161b22', plot_bgcolor='#161b22',
-            font_color='#e6edf3', showlegend=False, coloraxis_showscale=False, height=400
-        )
+        fig2.update_layout(paper_bgcolor='#161b22', plot_bgcolor='#161b22',
+                           font_color='#e6edf3', showlegend=False, coloraxis_showscale=False, height=400)
         st.plotly_chart(fig2, use_container_width=True)
 
     st.markdown("#### Quant vs Qual Score")
@@ -381,10 +367,8 @@ with tab2:
             hover_data=['Category', 'TOTAL_SCORE'],
             color_continuous_scale='YlOrRd'
         )
-        fig3.update_layout(
-            paper_bgcolor='#161b22', plot_bgcolor='#161b22',
-            font_color='#e6edf3', height=420
-        )
+        fig3.update_layout(paper_bgcolor='#161b22', plot_bgcolor='#161b22',
+                           font_color='#e6edf3', height=420)
         st.plotly_chart(fig3, use_container_width=True)
 
 with tab3:
