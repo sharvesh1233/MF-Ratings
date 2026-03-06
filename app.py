@@ -216,10 +216,10 @@ with st.sidebar:
         sel_category = st.selectbox("Category", ['All'] + cats)
 
         star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
-      else:
-        sel_asset    = 'All'
-        sel_category = 'All'
-        star_filter  = [5, 4, 3, 2]
+        else:
+            sel_asset    = 'All'
+            sel_category = 'All'
+            star_filter  = [5, 4, 3, 2]
 
     st.divider()
     st.markdown("### 📌 About")
