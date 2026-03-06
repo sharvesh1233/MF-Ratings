@@ -209,10 +209,10 @@ with st.sidebar:
      asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
      sel_asset = st.selectbox("Asset Class", asset_classes)
 
-        if sel_asset != 'All':
-            cats = sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
-        else:
-            cats = sorted(df_raw['Category'].dropna().unique().tolist())
+    if sel_asset != 'All':
+        cats = sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
+    else:
+        cats = sorted(df_raw['Category'].dropna().unique().tolist())
         sel_category = st.selectbox("Category", ['All'] + cats)
 
         star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
