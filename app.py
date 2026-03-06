@@ -207,7 +207,7 @@ with st.sidebar:
      st.write("DEBUG - Column names:", df_raw.columns.tolist())
      st.markdown("## 🔍 Filters")
      asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
-        sel_asset = st.selectbox("Asset Class", asset_classes)
+     sel_asset = st.selectbox("Asset Class", asset_classes)
 
         if sel_asset != 'All':
             cats = sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
