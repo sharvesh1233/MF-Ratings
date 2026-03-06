@@ -206,7 +206,7 @@ with st.sidebar:
     if df_raw is not None:
      st.write("DEBUG - Column names:", df_raw.columns.tolist())
      st.markdown("## 🔍 Filters")
-        asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
+     asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
         sel_asset = st.selectbox("Asset Class", asset_classes)
 
         if sel_asset != 'All':
