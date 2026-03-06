@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+import re
 
 # ─────────────────────────────────────────────
 # PAGE CONFIG
@@ -30,6 +31,19 @@ hr { border-color: #30363d; }
 
 
 # ─────────────────────────────────────────────
+# CLEAN COLUMN NAMES
+# ─────────────────────────────────────────────
+def clean_columns(df):
+    """
+    Aggressively clean column names:
+    - Strip leading/trailing whitespace of all kinds
+    - Replace any internal sequence of whitespace (tabs, newlines, etc.) with a single space
+    """
+    df.columns = [re.sub(r'\s+', ' ', str(c)).strip() for c in df.columns]
+    return df
+
+
+# ─────────────────────────────────────────────
 # LOAD DATA FROM GOOGLE DRIVE
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=300)
@@ -38,7 +52,7 @@ def load_from_drive(gdrive_url):
         file_id = gdrive_url.split("/d/")[1].split("/")[0]
         direct = f"https://drive.google.com/uc?export=download&id={file_id}"
         df = pd.read_excel(direct, engine="openpyxl")
-        df.columns = df.columns.str.strip()
+        df = clean_columns(df)
         return df
     except Exception as e:
         st.error(f"Could not load from Google Drive: {e}")
@@ -67,7 +81,7 @@ def percentile_score(series, weights):
 
 def compute_ratings(df_raw):
     df = df_raw.copy()
-    df.columns = df.columns.str.strip()
+    df = clean_columns(df)
 
     # Exclude funds younger than 5 years
     df = df[pd.to_numeric(df['Age (From Incept Date)'], errors='coerce') >= 5].copy()
@@ -208,43 +222,39 @@ with st.sidebar:
         uploaded = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
         if uploaded:
             df_raw = pd.read_excel(uploaded, engine="openpyxl")
-            df_raw.columns = df_raw.columns.str.strip()
+            df_raw = clean_columns(df_raw)
             st.success(f"✅ Loaded {len(df_raw)} funds")
 
     st.divider()
 
     if df_raw is not None:
-        # DEBUG: show actual column names to catch hidden space issues
+        # Show cleaned column names for verification
         with st.expander("🔍 Debug: Column Names"):
             st.write(df_raw.columns.tolist())
 
         st.markdown("## 🔍 Filters")
 
-        asset_col = None
-        for c in df_raw.columns:
-            if c.strip().lower() == 'asset class':
-                asset_col = c
-                break
-
-        if asset_col is None:
-            st.error("Column 'Asset Class' not found. See Debug above for actual column names.")
+        if 'Asset Class' not in df_raw.columns:
+            st.error(f"'Asset Class' column not found. Columns found: {df_raw.columns.tolist()}")
+            sel_asset    = 'All'
+            sel_category = 'All'
+            star_filter  = [5, 4, 3, 2]
         else:
-            asset_classes = ['All'] + sorted(df_raw[asset_col].dropna().unique().tolist())
+            asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
             sel_asset = st.selectbox("Asset Class", asset_classes)
 
             if sel_asset != 'All':
-                cats = sorted(df_raw[df_raw[asset_col] == sel_asset]['Category'].dropna().unique().tolist())
+                cats = sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
             else:
                 cats = sorted(df_raw['Category'].dropna().unique().tolist())
 
             sel_category = st.selectbox("Category", ['All'] + cats)
-            star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
+            star_filter  = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
 
     else:
         sel_asset    = 'All'
         sel_category = 'All'
         star_filter  = [5, 4, 3, 2]
-        asset_col    = 'Asset Class'
 
     st.divider()
     st.markdown("### 📌 About")
@@ -273,7 +283,8 @@ if df_raw is None:
     """)
     st.stop()
 
-if asset_col is None:
+if 'Asset Class' not in df_raw.columns:
+    st.warning("Waiting for valid data with 'Asset Class' column.")
     st.stop()
 
 # Compute ratings
@@ -288,7 +299,7 @@ with st.spinner("Computing ratings..."):
 # Apply filters
 dff = df.copy()
 if sel_asset != 'All':
-    dff = dff[dff[asset_col] == sel_asset]
+    dff = dff[dff['Asset Class'] == sel_asset]
 if sel_category != 'All':
     dff = dff[dff['Category'] == sel_category]
 dff = dff[dff['Stars'].isin(star_filter)]
@@ -306,10 +317,10 @@ st.divider()
 tab1, tab2, tab3 = st.tabs(["🏆 Rankings", "📈 Charts", "🔢 Raw Scores"])
 
 with tab1:
-    view_df = dff[['Rank', 'Stars', 'Scheme Name', asset_col, 'Category',
+    view_df = dff[['Rank', 'Stars', 'Scheme Name', 'Asset Class', 'Category',
                    'QUANT', 'QUAL', 'TOTAL_SCORE', 'Age (From Incept Date)', 'Scheme AUM']].copy()
     view_df['Rating'] = view_df['Stars'].apply(lambda x: '★' * x + '☆' * (5 - x))
-    view_df = view_df[['Rank', 'Rating', 'Scheme Name', asset_col, 'Category',
+    view_df = view_df[['Rank', 'Rating', 'Scheme Name', 'Asset Class', 'Category',
                         'QUANT', 'QUAL', 'TOTAL_SCORE', 'Age (From Incept Date)', 'Scheme AUM']]
     view_df = view_df.sort_values(['Category', 'Rank']).round(4)
 
