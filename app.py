@@ -30,7 +30,7 @@ hr { border-color: #30363d; }
 
 
 # ─────────────────────────────────────────────
-# EXACT COLUMN NAMES — we know the order
+# EXACT COLUMN NAMES — mapped by position
 # ─────────────────────────────────────────────
 COLUMNS = [
     'Scheme Code', 'Scheme Name', 'Asset Class', 'Category', 'Scheme AUM',
@@ -46,11 +46,25 @@ COLUMNS = [
 
 
 def load_and_fix(df):
-    """Force assign our known column names by position, ignoring whatever Excel says."""
-    # Use only as many columns as we have defined (in case there are extra blank cols)
+    """Force assign known column names by position."""
     df = df.iloc[:, :len(COLUMNS)].copy()
     df.columns = COLUMNS
+    # Convert all numeric columns
+    for col in COLUMNS:
+        if col not in ['Scheme Code', 'Scheme Name', 'Asset Class', 'Category', 'Exit Load']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
     return df
+
+
+def make_stars(x):
+    """Safely convert a value to star string."""
+    try:
+        n = int(x)
+        if n < 1 or n > 5:
+            return '—'
+        return '★' * n + '☆' * (5 - n)
+    except:
+        return '—'
 
 
 # ─────────────────────────────────────────────
@@ -94,18 +108,12 @@ def compute_ratings(df_raw):
 
     # Exclude funds younger than 5 years
     df = df[pd.to_numeric(df['Age (From Incept Date)'], errors='coerce') >= 5].copy()
+    df = df.reset_index(drop=True)
 
     if df.empty:
         st.error("No funds with Age >= 5 years found.")
         st.stop()
 
-    # Convert numeric columns
-    num_cols = COLUMNS[4:]  # everything after Scheme Code, Scheme Name, Asset Class, Category
-    for col in num_cols:
-        if col not in ['Exit Load']:
-            df[col] = pd.to_numeric(df[col], errors='coerce')
-
-    # Category averages
     cat_avg_cols = [
         'Std. Deviation', 'Beta', 'Jensen Alpha', 'Sharpe Ratio', 'Sortino',
         'Information Ratio', 'Up/Down Capture Ratio', 'Top 5 Stocks (%)',
@@ -185,7 +193,7 @@ def compute_ratings(df_raw):
 
     def assign_stars(group):
         n = len(group)
-        stars = pd.Series(index=group.index, dtype=int)
+        stars = pd.Series(index=group.index, dtype=float)
         for idx in group.index:
             pct = group.loc[idx, 'Rank'] / n
             if pct <= 0.25:
@@ -199,6 +207,8 @@ def compute_ratings(df_raw):
         return stars
 
     df['Stars'] = df.groupby('Category', group_keys=False).apply(assign_stars)
+    df['Stars'] = pd.to_numeric(df['Stars'], errors='coerce').fillna(0).astype(int)
+
     return df
 
 
@@ -309,7 +319,7 @@ tab1, tab2, tab3 = st.tabs(["🏆 Rankings", "📈 Charts", "🔢 Raw Scores"])
 with tab1:
     view_df = dff[['Rank', 'Stars', 'Scheme Name', 'Asset Class', 'Category',
                    'QUANT', 'QUAL', 'TOTAL_SCORE', 'Age (From Incept Date)', 'Scheme AUM']].copy()
-    view_df['Rating'] = view_df['Stars'].apply(lambda x: '★' * x + '☆' * (5 - x))
+    view_df['Rating'] = view_df['Stars'].apply(make_stars)
     view_df = view_df[['Rank', 'Rating', 'Scheme Name', 'Asset Class', 'Category',
                         'QUANT', 'QUAL', 'TOTAL_SCORE', 'Age (From Incept Date)', 'Scheme AUM']]
     view_df = view_df.sort_values(['Category', 'Rank']).round(4)
