@@ -216,7 +216,7 @@ with st.sidebar:
         sel_category = st.selectbox("Category", ['All'] + cats)
 
         star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
-     else:
+      else:
         sel_asset    = 'All'
         sel_category = 'All'
         star_filter  = [5, 4, 3, 2]
