@@ -24,15 +24,13 @@ h1, h2, h3 { font-family: 'DM Serif Display', serif; }
 .main { background-color: #0d1117; }
 section[data-testid="stSidebar"] { background: #161b22; border-right: 1px solid #30363d; }
 .page-header { background: linear-gradient(90deg, #161b22 0%, #1c2128 100%); border: 1px solid #30363d; border-radius: 14px; padding: 28px 32px; margin-bottom: 24px; }
-.stars { color: #f0b429; font-size: 20px; }
-.stars-grey { color: #3d444d; font-size: 20px; }
 hr { border-color: #30363d; }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────
-# LOAD DATA
+# LOAD DATA FROM GOOGLE DRIVE
 # ─────────────────────────────────────────────
 @st.cache_data(ttl=300)
 def load_from_drive(gdrive_url):
@@ -40,7 +38,7 @@ def load_from_drive(gdrive_url):
         file_id = gdrive_url.split("/d/")[1].split("/")[0]
         direct = f"https://drive.google.com/uc?export=download&id={file_id}"
         df = pd.read_excel(direct, engine="openpyxl")
-        df.columns = df.columns.str.strip()  # remove hidden spaces
+        df.columns = df.columns.str.strip()
         return df
     except Exception as e:
         st.error(f"Could not load from Google Drive: {e}")
@@ -51,7 +49,6 @@ def load_from_drive(gdrive_url):
 # RATING ENGINE
 # ─────────────────────────────────────────────
 def percentile_score(series, weights):
-    """Assigns score based on quartile rank. Higher value = better."""
     ranks = series.rank(ascending=False, method='min')
     n = len(series)
     scores = pd.Series(index=series.index, dtype=float)
@@ -91,8 +88,6 @@ def compute_ratings(df_raw):
     existing = [c for c in cat_avg_cols if c in df.columns]
     cat_avgs = df.groupby('Category')[existing].transform('mean')
 
-    # ── QUANTITATIVE ──────────────────────────────────────────────
-
     # Std Deviation & Beta: lower = better
     df['s_StdDev'] = np.where(df['Std. Deviation'] < cat_avgs['Std. Deviation'], 0.025, 0.005)
     df['s_Beta']   = np.where(df['Beta'] < cat_avgs['Beta'], 0.025, 0.005)
@@ -110,9 +105,15 @@ def compute_ratings(df_raw):
         )
 
     # Information Ratio
-    df['s_IR'] = np.where(df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.70, 0.02,
-                 np.where(df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.50, 0.01,
-                 np.where(df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.30, 0.005, 0)))
+    df['s_IR'] = np.where(
+        df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.70, 0.02,
+        np.where(
+            df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.50, 0.01,
+            np.where(
+                df['Information Ratio'] > cat_avgs['Information Ratio'] * 1.30, 0.005, 0
+            )
+        )
+    )
 
     # Top 5 Stocks concentration
     df['s_Top5'] = np.where(df['Top 5 Stocks (%)'] < 35, 0.02, -0.02)
@@ -148,16 +149,18 @@ def compute_ratings(df_raw):
     ]
     df['QUANT'] = df[quant_cols].sum(axis=1) / 2
 
-    # ── QUALITATIVE ───────────────────────────────────────────────
+    # Qualitative scores
     df['s_AUM']       = np.where(df['Scheme AUM'] > cat_avgs['Scheme AUM'], 0.10, 0.05)
-    df['s_ExitLoad']  = np.where(df['Exit Load'].astype(str).str.strip().str.lower().isin(['yes', '1', 'y']), -0.10, 0.05)
+    df['s_ExitLoad']  = np.where(
+        df['Exit Load'].astype(str).str.strip().str.lower().isin(['yes', '1', 'y']), -0.10, 0.05
+    )
     df['s_StockCnt']  = np.where(df['Total Equity Stocks Count'] > cat_avgs['Total Equity Stocks Count'], 0.10, 0.05)
     df['s_SectorCnt'] = np.where(df['Total Sector Count'] > cat_avgs['Total Sector Count'], 0.10, 0.05)
     df['s_Turnover']  = np.where(df['Turnover Ratio (%)'] < cat_avgs['Turnover Ratio (%)'], 0.10, 0.05)
 
     df['QUAL'] = df[['s_AUM', 's_ExitLoad', 's_StockCnt', 's_SectorCnt', 's_Turnover']].sum(axis=1)
 
-    # ── TOTAL SCORE, RANK, STARS ──────────────────────────────────
+    # Total score, rank, stars
     df['TOTAL_SCORE'] = df['QUANT'] + df['QUAL']
     df['Rank'] = df.groupby('Category')['TOTAL_SCORE'].rank(ascending=False, method='min').astype(int)
 
@@ -166,7 +169,14 @@ def compute_ratings(df_raw):
         stars = pd.Series(index=group.index, dtype=int)
         for idx in group.index:
             pct = group.loc[idx, 'Rank'] / n
-            stars[idx] = 5 if pct <= 0.25 else 4 if pct <= 0.50 else 3 if pct <= 0.75 else 2
+            if pct <= 0.25:
+                stars[idx] = 5
+            elif pct <= 0.50:
+                stars[idx] = 4
+            elif pct <= 0.75:
+                stars[idx] = 3
+            else:
+                stars[idx] = 2
         return stars
 
     df['Stars'] = df.groupby('Category', group_keys=False).apply(assign_stars)
@@ -193,7 +203,8 @@ with st.sidebar:
                 df_raw = load_from_drive(gdrive_url)
             if df_raw is not None:
                 st.success(f"✅ Loaded {len(df_raw)} funds")
-    else:
+
+    if data_source == "Upload Excel":
         uploaded = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
         if uploaded:
             df_raw = pd.read_excel(uploaded, engine="openpyxl")
@@ -202,24 +213,38 @@ with st.sidebar:
 
     st.divider()
 
-    # Filters — only show after data is loaded
     if df_raw is not None:
-     st.write("DEBUG - Column names:", df_raw.columns.tolist())
-     st.markdown("## 🔍 Filters")
-     asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
-     sel_asset = st.selectbox("Asset Class", asset_classes)
+        # DEBUG: show actual column names to catch hidden space issues
+        with st.expander("🔍 Debug: Column Names"):
+            st.write(df_raw.columns.tolist())
 
-    if sel_asset != 'All':
-        cats = sorted(df_raw[df_raw['Asset Class'] == sel_asset]['Category'].dropna().unique().tolist())
-    else:
-        cats = sorted(df_raw['Category'].dropna().unique().tolist())
-        sel_category = st.selectbox("Category", ['All'] + cats)
+        st.markdown("## 🔍 Filters")
 
-        star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
+        asset_col = None
+        for c in df_raw.columns:
+            if c.strip().lower() == 'asset class':
+                asset_col = c
+                break
+
+        if asset_col is None:
+            st.error("Column 'Asset Class' not found. See Debug above for actual column names.")
         else:
-            sel_asset    = 'All'
-            sel_category = 'All'
-            star_filter  = [5, 4, 3, 2]
+            asset_classes = ['All'] + sorted(df_raw[asset_col].dropna().unique().tolist())
+            sel_asset = st.selectbox("Asset Class", asset_classes)
+
+            if sel_asset != 'All':
+                cats = sorted(df_raw[df_raw[asset_col] == sel_asset]['Category'].dropna().unique().tolist())
+            else:
+                cats = sorted(df_raw['Category'].dropna().unique().tolist())
+
+            sel_category = st.selectbox("Category", ['All'] + cats)
+            star_filter = st.multiselect("Star Rating", [5, 4, 3, 2], default=[5, 4, 3, 2])
+
+    else:
+        sel_asset    = 'All'
+        sel_category = 'All'
+        star_filter  = [5, 4, 3, 2]
+        asset_col    = 'Asset Class'
 
     st.divider()
     st.markdown("### 📌 About")
@@ -248,6 +273,9 @@ if df_raw is None:
     """)
     st.stop()
 
+if asset_col is None:
+    st.stop()
+
 # Compute ratings
 with st.spinner("Computing ratings..."):
     try:
@@ -260,12 +288,12 @@ with st.spinner("Computing ratings..."):
 # Apply filters
 dff = df.copy()
 if sel_asset != 'All':
-    dff = dff[dff['Asset Class'] == sel_asset]
+    dff = dff[dff[asset_col] == sel_asset]
 if sel_category != 'All':
     dff = dff[dff['Category'] == sel_category]
 dff = dff[dff['Stars'].isin(star_filter)]
 
-# ── Summary metrics ────────────────────────────────────────────────
+# Summary metrics
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Total Funds Rated", len(dff))
 c2.metric("5★ Funds", len(dff[dff['Stars'] == 5]))
@@ -274,14 +302,14 @@ c4.metric("Categories", dff['Category'].nunique())
 
 st.divider()
 
-# ── Tabs ───────────────────────────────────────────────────────────
+# Tabs
 tab1, tab2, tab3 = st.tabs(["🏆 Rankings", "📈 Charts", "🔢 Raw Scores"])
 
 with tab1:
-    view_df = dff[['Rank', 'Stars', 'Scheme Name', 'Asset Class', 'Category',
+    view_df = dff[['Rank', 'Stars', 'Scheme Name', asset_col, 'Category',
                    'QUANT', 'QUAL', 'TOTAL_SCORE', 'Age (From Incept Date)', 'Scheme AUM']].copy()
     view_df['Rating'] = view_df['Stars'].apply(lambda x: '★' * x + '☆' * (5 - x))
-    view_df = view_df[['Rank', 'Rating', 'Scheme Name', 'Asset Class', 'Category',
+    view_df = view_df[['Rank', 'Rating', 'Scheme Name', asset_col, 'Category',
                         'QUANT', 'QUAL', 'TOTAL_SCORE', 'Age (From Incept Date)', 'Scheme AUM']]
     view_df = view_df.sort_values(['Category', 'Rank']).round(4)
 
@@ -306,42 +334,64 @@ with tab2:
     with col1:
         st.markdown("#### Star Distribution")
         star_counts = dff['Stars'].value_counts().sort_index(ascending=False)
-        fig = px.bar(x=star_counts.index.astype(str) + ' ★', y=star_counts.values,
-                     color=star_counts.values, color_continuous_scale='Oranges')
-        fig.update_layout(paper_bgcolor='#161b22', plot_bgcolor='#161b22',
-                          font_color='#e6edf3', showlegend=False, coloraxis_showscale=False)
+        fig = px.bar(
+            x=star_counts.index.astype(str) + ' ★',
+            y=star_counts.values,
+            color=star_counts.values,
+            color_continuous_scale='Oranges'
+        )
+        fig.update_layout(
+            paper_bgcolor='#161b22', plot_bgcolor='#161b22',
+            font_color='#e6edf3', showlegend=False, coloraxis_showscale=False
+        )
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
         st.markdown("#### Funds per Category")
         cat_counts = dff['Category'].value_counts().head(15)
-        fig2 = px.bar(x=cat_counts.values, y=cat_counts.index, orientation='h',
-                      color=cat_counts.values, color_continuous_scale='Blues')
-        fig2.update_layout(paper_bgcolor='#161b22', plot_bgcolor='#161b22',
-                           font_color='#e6edf3', showlegend=False, coloraxis_showscale=False, height=400)
+        fig2 = px.bar(
+            x=cat_counts.values, y=cat_counts.index,
+            orientation='h',
+            color=cat_counts.values,
+            color_continuous_scale='Blues'
+        )
+        fig2.update_layout(
+            paper_bgcolor='#161b22', plot_bgcolor='#161b22',
+            font_color='#e6edf3', showlegend=False, coloraxis_showscale=False, height=400
+        )
         st.plotly_chart(fig2, use_container_width=True)
 
     st.markdown("#### Quant vs Qual Score")
     scatter_df = dff[['Scheme Name', 'Category', 'QUANT', 'QUAL', 'Stars', 'TOTAL_SCORE']].dropna()
     if len(scatter_df) > 0:
-        fig3 = px.scatter(scatter_df, x='QUANT', y='QUAL', color='Stars',
-                          hover_name='Scheme Name', hover_data=['Category', 'TOTAL_SCORE'],
-                          color_continuous_scale='YlOrRd')
-        fig3.update_layout(paper_bgcolor='#161b22', plot_bgcolor='#161b22',
-                           font_color='#e6edf3', height=420)
+        fig3 = px.scatter(
+            scatter_df, x='QUANT', y='QUAL', color='Stars',
+            hover_name='Scheme Name',
+            hover_data=['Category', 'TOTAL_SCORE'],
+            color_continuous_scale='YlOrRd'
+        )
+        fig3.update_layout(
+            paper_bgcolor='#161b22', plot_bgcolor='#161b22',
+            font_color='#e6edf3', height=420
+        )
         st.plotly_chart(fig3, use_container_width=True)
 
 with tab3:
     st.markdown("#### Detailed Score Breakdown")
-    score_cols = ['Scheme Name', 'Category', 'Stars', 'Rank',
-                  's_StdDev', 's_Beta', 's_JAlpha', 's_Sharpe', 's_Sortino',
-                  's_IR', 's_UpDown', 's_Top5',
-                  's_3YR_1D', 's_3YR_1M', 's_3YR_1Y',
-                  's_5Y_1D', 's_5Y_1M', 's_5Y_1Y',
-                  's_10Y_1D', 's_10Y_1M', 's_10Y_1Y',
-                  's_1YCAGR', 's_3YCAGR', 's_5YCAGR', 's_10YCAGR', 'QUANT',
-                  's_AUM', 's_ExitLoad', 's_StockCnt', 's_SectorCnt', 's_Turnover',
-                  'QUAL', 'TOTAL_SCORE']
+    score_cols = [
+        'Scheme Name', 'Category', 'Stars', 'Rank',
+        's_StdDev', 's_Beta', 's_JAlpha', 's_Sharpe', 's_Sortino',
+        's_IR', 's_UpDown', 's_Top5',
+        's_3YR_1D', 's_3YR_1M', 's_3YR_1Y',
+        's_5Y_1D', 's_5Y_1M', 's_5Y_1Y',
+        's_10Y_1D', 's_10Y_1M', 's_10Y_1Y',
+        's_1YCAGR', 's_3YCAGR', 's_5YCAGR', 's_10YCAGR', 'QUANT',
+        's_AUM', 's_ExitLoad', 's_StockCnt', 's_SectorCnt', 's_Turnover',
+        'QUAL', 'TOTAL_SCORE'
+    ]
     available = [c for c in score_cols if c in dff.columns]
-    st.dataframe(dff[available].sort_values(['Category', 'Rank']).round(4),
-                 use_container_width=True, hide_index=True)
+    st.dataframe(
+        dff[available].sort_values(['Category', 'Rank']).round(4),
+        use_container_width=True,
+        hide_index=True
+    )
