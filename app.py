@@ -205,7 +205,7 @@ with st.sidebar:
     # Filters — only show after data is loaded
     if df_raw is not None:
      st.write("DEBUG - Column names:", df_raw.columns.tolist())
-      st.markdown("## 🔍 Filters")
+     st.markdown("## 🔍 Filters")
         asset_classes = ['All'] + sorted(df_raw['Asset Class'].dropna().unique().tolist())
         sel_asset = st.selectbox("Asset Class", asset_classes)
 
